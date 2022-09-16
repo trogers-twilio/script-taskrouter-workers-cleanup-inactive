@@ -1,0 +1,17 @@
+{
+  "name": "script-taskrouter-workers-cleanup-inactive",
+  "version": "1.0.0",
+  "description": "Script to delete TaskRouter workers that haven't had an activity change for X days",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Terence Rogers (Twilio)",
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^16.0.0",
+    "twilio": "^3.76.1",
+    "json2csv": "^5.0.7",
+    "moment": "^2.29.3"
+  }
+}
