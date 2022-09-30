@@ -2,6 +2,7 @@ const Twilio = require('twilio');
 const moment = require('moment');
 const { parse } = require('json2csv');
 const { writeFile } = require('node:fs/promises');
+const fs = require('fs');
 require('dotenv').config();
 
 const { confirmTargetAccount, confirmToProceed } = require('./helpers/utils');
@@ -10,6 +11,7 @@ const {
   CLEAR_WORKER_ATTRIBUTES,
   CSV_FILENAME_PREFIX,
   DELETE_WORKER_ATTRIBUTES,
+  EXCLUDE_FLEX_ADMIN_ROLE,
   EXPORT_WORKER_ATTRIBUTES,
   EXPORT_WORKER_PROPERTIES,
   MAX_DAYS_SINCE_LAST_STATUS_CHANGE,
@@ -58,6 +60,20 @@ const isLastStatusChangeGreaterThanMax = (dateStatusChanged) => {
   const maxDateStatusChanged = new Date().getTime() - maxDaysSinceLastStatusChangeMilliseconds;
 
   return maxDateStatusChanged > dateStatusChanged;
+}
+
+const isWorkerExcluded = (worker) => {
+  let result = false;
+
+  const attributesJson = worker && worker.attributes;
+  const attributes = typeof attributesJson === 'string' && JSON.parse(attributesJson);
+  const roles = attributes && attributes.roles || [];
+
+  if (typeof EXCLUDE_FLEX_ADMIN_ROLE === 'string' && EXCLUDE_FLEX_ADMIN_ROLE === 'true') {
+    result = roles.some(r => r && r.toLowerCase() === 'admin');
+  }
+
+  return result;
 }
 
 const populateWorkerMetadata = (worker) => {
@@ -120,7 +136,12 @@ const exportWorkersToFile = async () => {
   console.log('\nParsing workers array to CSV format');
   const workersCsv = parse(sortedWorkersToDelete);
 
-  const fileNameWithTimestamp = `${CSV_FILENAME_PREFIX}_${timestamp}.csv`
+  const outputDirectory = 'output';
+  if (!fs.existsSync(outputDirectory)){
+    fs.mkdirSync(outputDirectory)
+  }
+
+  const fileNameWithTimestamp = `${outputDirectory}/${CSV_FILENAME_PREFIX}_${timestamp}.csv`
   console.log('Writing workers to file', fileNameWithTimestamp);
   await writeFile(fileNameWithTimestamp, workersCsv);
   console.log('Workers CSV file created');
@@ -155,7 +176,7 @@ const searchWorkers = async () => {
   }
 
   matchingWorkers = allWorkers.filter(w => {
-    return isLastStatusChangeGreaterThanMax(w.dateStatusChanged);
+    return isLastStatusChangeGreaterThanMax(w.dateStatusChanged) && !isWorkerExcluded(w);
   });
 
   console.log('Found', matchingWorkers.length, 'workers with status change greater than', maxDaysSinceLastStatusChange, 'days');
@@ -171,10 +192,20 @@ const searchWorkers = async () => {
 }
 
 const trimWorkersToDelete = () => {
-  const maxWorkersToDelete = MAX_WORKERS_TO_DELETE && parseInt(MAX_WORKERS_TO_DELETE);
-  if (typeof maxWorkersToDelete === 'number') {
+  const maxWorkersToDelete = MAX_WORKERS_TO_DELETE && MAX_WORKERS_TO_DELETE.toUpperCase() === 'ALL'
+    ? 'ALL'
+    : MAX_WORKERS_TO_DELETE && parseInt(MAX_WORKERS_TO_DELETE);
+
+  if (maxWorkersToDelete === 'ALL') {
+    console.log('\nmaxWorkersToDelete set to "ALL". All matching workers will be deleted.');
+  }
+  else if (!isNaN(maxWorkersToDelete)) {
     console.log('\nTrimming list of workers to max of', maxWorkersToDelete);
     sortedWorkersToDelete.splice(0 + maxWorkersToDelete);
+  }
+  else {
+    console.log('\nInvalid value for environment variable MAX_WORKERS_TO_DELETE (must be "ALL" or an integer). Clearing list of workers to delete.');
+    sortedWorkersToDelete.splice(0, sortedWorkersToDelete.length);
   }
 }
 
@@ -256,20 +287,25 @@ const runScript = async () => {
   const areVariablesValid = validateVariables();
 
   if (!areVariablesValid) {
-    console.log('Fix invalid environment variables and re-run script\n');
+    console.log('\nFix invalid environment variables and re-run script\n');
     return;
   }
 
   await searchWorkers();
 
   if (workersToDelete.size === 0) {
-    console.log('There are no workers to delete. Nothing further to do.\n');
+    console.log('\nThere are no workers to delete. Nothing further to do.\n');
     return;
   }
 
   sortWorkers();
 
   trimWorkersToDelete();
+
+  if (sortedWorkersToDelete.length === 0) {
+    console.log('\nThere are no workers to delete. Nothing further to do.\n');
+    return;
+  }
 
   await exportWorkersToFile();
 

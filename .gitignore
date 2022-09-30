@@ -124,6 +124,7 @@ dist
 .pnp.*
 
 # Output files
+output
 *.csv
 *.xlsx
 *.txt
